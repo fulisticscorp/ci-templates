@@ -68,7 +68,7 @@ jobs:
         install_components: 'gke-gcloud-auth-plugin'
 
     - run: |-
-        gcloud auth configure-docker ${{ inputs.gke_region }}-docker.pkg.dev
+        gcloud --quiet auth configure-docker
 
     - run: |-
         gcloud container clusters get-credentials "$GKE_CLUSTER" --$LOCATION_TYPE "$LOCATION_VALUE" --project "$PROJECT_ID"
