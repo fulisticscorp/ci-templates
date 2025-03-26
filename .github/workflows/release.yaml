@@ -1,0 +1,93 @@
+name: Reusable Deploy Workflow
+
+on:
+  workflow_call:
+    inputs:
+      project_id:
+        required: true
+        type: string
+      gke_cluster:
+        required: true
+        type: string
+      location_type:
+        required: true
+        type: string
+        description: 'Either "region" or "zone"'
+      location_value:
+        required: true
+        type: string
+        description: 'The region or zone value (e.g., us-east1 or us-east1-b)'
+      image:
+        required: true
+        type: string
+      helm_chart:
+        required: true
+        type: string
+      helm_release:
+        required: true
+        type: string
+      artifact_repo:
+        required: true
+        type: string
+      env:
+        required: true
+        type: string
+    secrets:
+      GKE_SA_KEY:
+        required: true
+
+env:
+  PROJECT_ID: ${{ inputs.project_id }}
+  GKE_CLUSTER: ${{ inputs.gke_cluster }}
+  LOCATION_TYPE: ${{ inputs.location_type }}
+  LOCATION_VALUE: ${{ inputs.location_value }}
+  IMAGE: ${{ inputs.image }}
+  HELM_CHART: ${{ inputs.helm_chart }}
+  HELM_RELEASE: ${{ inputs.helm_release }}
+  ARTIFACT_REPO: ${{ inputs.artifact_repo }}
+  ENV: ${{ inputs.env }}
+
+jobs:
+  setup-build-publish-deploy:
+    name: Setup, Build, Publish, and Deploy
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ secrets.GKE_SA_KEY }}'
+
+    - name: 'Set up Cloud SDK'
+      uses: 'google-github-actions/setup-gcloud@v2'
+      with:
+        project_id: ${{ inputs.project_id }}
+        install_components: 'gke-gcloud-auth-plugin'
+
+    - run: |-
+        gcloud auth configure-docker ${{ inputs.gke_region }}-docker.pkg.dev
+
+    - run: |-
+        gcloud container clusters get-credentials "$GKE_CLUSTER" --$LOCATION_TYPE "$LOCATION_VALUE" --project "$PROJECT_ID"
+
+    - name: Build
+      run: |-
+        docker build --tag "$ARTIFACT_REPO/$IMAGE:$GITHUB_SHA" .
+
+    - name: Publish
+      run: |-
+        docker push "$ARTIFACT_REPO/$IMAGE:$GITHUB_SHA"
+
+    - name: Deploy
+      run: |-
+        helm gcs init gs://podx-prod-helmcharts
+        helm repo add podx-charts gs://podx-prod-helmcharts
+        helm repo update
+        helm upgrade --install "$HELM_RELEASE" podx-charts/"$HELM_CHART" \
+        -f deploy/"$ENV".yaml \
+        --set image.repository="$ARTIFACT_REPO/$IMAGE" \
+        --set image.tag="$GITHUB_SHA" \
+        --namespace "$ENV" 
